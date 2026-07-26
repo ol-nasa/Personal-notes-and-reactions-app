@@ -570,27 +570,57 @@
       if (!file) return;
       try {
         const text = await file.text();
-        const lines = text.trim().split('\n');
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+        
         if (lines.length < 2) {
           setStatus('CSV-файл пустой', true);
           return;
         }
-        const header = lines[0].split(';').map(h => h.trim().toLowerCase());
+        
+        // Парсим заголовок
+        const headerLine = lines[0];
+        let header = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < headerLine.length; i++) {
+          const ch = headerLine[i];
+          if (ch === '"') {
+            if (inQuotes && headerLine[i + 1] === '"') {
+              current += '"';
+              i++;
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (ch === ';' && !inQuotes) {
+            header.push(current.trim().toLowerCase());
+            current = '';
+          } else {
+            current += ch;
+          }
+        }
+        header.push(current.trim().toLowerCase());
+        
         const idIdx = header.indexOf('id');
         const parentIdx = header.indexOf('parent_id');
         const contentIdx = header.indexOf('content');
         const createdIdx = header.indexOf('created_at');
+        
         if (idIdx < 0 || contentIdx < 0 || createdIdx < 0) {
-          setStatus('Неверный формат CSV (необходимы колонки: id, content, created_at)', true);
+          setStatus('Неверный формат CSV (необходимы колонки: id, content, created_at). Найдены: ' + header.join(', '), true);
+          console.log('Expected headers: id, content, created_at');
+          console.log('Found headers:', header);
           return;
         }
+        
         const imported = [];
         for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].trim();
+          const line = lines[i];
           if (!line) continue;
+          
           let fields = [];
           let current = '';
           let inQuotes = false;
+          
           for (let j = 0; j < line.length; j++) {
             const ch = line[j];
             if (ch === '"') {
@@ -601,37 +631,44 @@
                 inQuotes = !inQuotes;
               }
             } else if (ch === ';' && !inQuotes) {
-              fields.push(current);
+              fields.push(current.trim());
               current = '';
             } else {
               current += ch;
             }
           }
-          fields.push(current);
-          const id = fields[idIdx]?.trim() || '';
-          const parentId = fields[parentIdx]?.trim() || null;
-          const content = fields[contentIdx]?.trim() || '';
-          const createdAt = fields[createdIdx]?.trim() || new Date().toISOString();
-          if (id && content) {
+          fields.push(current.trim());
+          
+          const id = fields[idIdx] || '';
+          const parentId = fields[parentIdx] || '';
+          const content = fields[contentIdx] || '';
+          const createdAt = fields[createdIdx] || new Date().toISOString();
+          
+          if (id && content && createdAt) {
             imported.push({
               id,
-              parent_id: parentId || null,
+              parent_id: parentId ? parentId : null,
               content,
               created_at: createdAt
             });
           }
         }
+        
         if (imported.length === 0) {
           setStatus('Не найдено записей для импорта', true);
+          console.log('No records imported. Total lines:', lines.length);
           return;
         }
+        
         nodes = imported;
         await saveNodes();
         render();
-        setStatus(`Импортировано ${imported.length} записей`);
+        setStatus(`✓ Импортировано ${imported.length} записей`);
         document.getElementById('import-csv').value = '';
+        console.log('Imported data:', nodes);
       } catch (err) {
         setStatus('Ошибка при импорте: ' + err.message, true);
+        console.error('Import error:', err);
       }
     });
 
