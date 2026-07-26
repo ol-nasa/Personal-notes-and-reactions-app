@@ -230,12 +230,10 @@
     let nodes = [];
     let confirmDeleteId = null;
     let db = null;
-    let auth = null;
-    let userId = null;
     let firebaseEnabled = false;
     let unsubscribe = null;
 
-    // Инициализация Firebase
+    // Инициализация Firebase без анонимной авторизации
     async function initializeFirebase() {
       try {
         const config = window.firebaseConfig || {};
@@ -249,13 +247,9 @@
         }
 
         const app = window.firebase.initializeApp(config);
-        auth = window.firebase.auth(app);
         db = window.firebase.firestore(app);
-
-        const userCredential = await auth.signInAnonymously();
-        userId = userCredential.user.uid;
         firebaseEnabled = true;
-        console.log('✓ Firebase инициализирован для пользователя:', userId);
+        console.log('✓ Firebase инициализирован');
 
         await syncFirebaseData();
         setupRealtimeListener();
@@ -267,16 +261,18 @@
 
     // Загрузка данных из Firebase
     async function syncFirebaseData() {
-      if (!firebaseEnabled || !db || !userId) return;
+      if (!firebaseEnabled || !db) return;
       try {
-        const userNotesRef = db.collection('users').doc(userId).collection('notes');
-        const snap = await userNotesRef.get();
-        const fbNodes = snap.docs.map((doc) => doc.data());
-        if (fbNodes.length > 0) {
-          nodes = fbNodes.sort((a, b) => a.created_at.localeCompare(b.created_at));
-          localStorage.setItem('nodes', JSON.stringify(nodes));
-          render();
-          console.log('✓ Загружено из Firebase:', nodes.length, 'записей');
+        const sharedRef = db.collection('shared').doc('notes');
+        const snap = await sharedRef.get();
+        if (snap.exists) {
+          const data = snap.data();
+          if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+            nodes = data.nodes.sort((a, b) => a.created_at.localeCompare(b.created_at));
+            localStorage.setItem('nodes', JSON.stringify(nodes));
+            render();
+            console.log('✓ Загружено из Firebase:', nodes.length, 'записей');
+          }
         }
       } catch (err) {
         console.error('Ошибка синхронизации Firebase:', err);
@@ -285,15 +281,19 @@
 
     // Слушатель для реал-тайм обновлений
     function setupRealtimeListener() {
-      if (!firebaseEnabled || !db || !userId) return;
+      if (!firebaseEnabled || !db) return;
       try {
-        const userNotesRef = db.collection('users').doc(userId).collection('notes');
-        unsubscribe = userNotesRef.onSnapshot((snap) => {
-          const fbNodes = snap.docs.map((doc) => doc.data());
-          if (JSON.stringify(fbNodes) !== JSON.stringify(nodes)) {
-            nodes = fbNodes.sort((a, b) => a.created_at.localeCompare(b.created_at));
-            localStorage.setItem('nodes', JSON.stringify(nodes));
-            render();
+        const sharedRef = db.collection('shared').doc('notes');
+        unsubscribe = sharedRef.onSnapshot((snap) => {
+          if (!snap.exists) return;
+          const data = snap.data();
+          if (Array.isArray(data.nodes)) {
+            const fbNodes = data.nodes;
+            if (JSON.stringify(fbNodes) !== JSON.stringify(nodes)) {
+              nodes = fbNodes.sort((a, b) => a.created_at.localeCompare(b.created_at));
+              localStorage.setItem('nodes', JSON.stringify(nodes));
+              render();
+            }
           }
         });
       } catch (err) {
@@ -303,22 +303,10 @@
 
     // Сохранение в Firebase
     async function saveToFirebase() {
-      if (!firebaseEnabled || !db || !userId) return;
+      if (!firebaseEnabled || !db) return;
       try {
-        const userNotesRef = db.collection('users').doc(userId).collection('notes');
-        const snap = await userNotesRef.get();
-        const fbIds = new Set(snap.docs.map((d) => d.id));
-        const localIds = new Set(nodes.map((n) => n.id));
-
-        for (const fbId of fbIds) {
-          if (!localIds.has(fbId)) {
-            await userNotesRef.doc(fbId).delete();
-          }
-        }
-
-        for (const node of nodes) {
-          await userNotesRef.doc(node.id).set(node);
-        }
+        const sharedRef = db.collection('shared').doc('notes');
+        await sharedRef.set({ nodes });
         console.log('✓ Сохранено в Firebase:', nodes.length, 'записей');
       } catch (err) {
         console.error('Ошибка сохранения Firebase:', err);
