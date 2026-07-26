@@ -176,20 +176,29 @@
     }
     #export-actions { display: flex; gap: 8px; margin-top: 6px; }
     .status { font-size: 12px; color: var(--ink-2); margin-top: 6px; min-height: 14px; }
+    .firebase-config-panel {
+      margin-top: 10px;
+      padding: 10px;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .firebase-config-panel input {
+      width: 100%;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      padding: 7px 8px;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      margin-bottom: 6px;
+    }
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
   <script>
-    window.firebaseConfig = {
-      apiKey: "REPLACE_WITH_YOUR_FIREBASE_API_KEY",
-      authDomain: "notes-app-f6c68.firebaseapp.com",
-      projectId: "notes-app-f6c68",
-      storageBucket: "notes-app-f6c68.firebasestorage.app",
-      messagingSenderId: "1068689221831",
-      appId: "1:1068689221831:web:252e765042c6a395b936e2"
-    };
+    window.firebaseConfig = {};
     window.firebase = firebase;
   </script>
 </head>
@@ -221,6 +230,18 @@
           <button id="import-csv-btn">Загрузить CSV</button>
         </div>
         <textarea id="csv-out" readonly></textarea>
+        <div class="firebase-config-panel">
+          <div style="font-size:12px; color:var(--ink-2); margin-bottom:6px;">Firebase sync</div>
+          <input id="firebase-api-key" placeholder="API Key">
+          <input id="firebase-auth-domain" placeholder="Auth Domain">
+          <input id="firebase-project-id" placeholder="Project ID">
+          <input id="firebase-storage-bucket" placeholder="Storage Bucket">
+          <input id="firebase-messaging-sender-id" placeholder="Messaging Sender ID">
+          <input id="firebase-app-id" placeholder="App ID">
+          <div class="reply-actions">
+            <button id="save-firebase-config" class="btn-primary">Подключить Firebase</button>
+          </div>
+        </div>
       </div>
       <div class="status" id="status"></div>
     </div>
@@ -233,12 +254,48 @@
     let firebaseEnabled = false;
     let unsubscribe = null;
 
-    // Инициализация Firebase без анонимной авторизации
+    function getStoredFirebaseConfig() {
+      try {
+        const raw = localStorage.getItem('firebase-config');
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && parsed.projectId && parsed.apiKey ? parsed : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saveFirebaseConfigToStorage(config) {
+      localStorage.setItem('firebase-config', JSON.stringify(config));
+      window.firebaseConfig = config;
+    }
+
+    function fillFirebaseConfigForm(config) {
+      if (!config) return;
+      document.getElementById('firebase-api-key').value = config.apiKey || '';
+      document.getElementById('firebase-auth-domain').value = config.authDomain || '';
+      document.getElementById('firebase-project-id').value = config.projectId || '';
+      document.getElementById('firebase-storage-bucket').value = config.storageBucket || '';
+      document.getElementById('firebase-messaging-sender-id').value = config.messagingSenderId || '';
+      document.getElementById('firebase-app-id').value = config.appId || '';
+    }
+
+    function collectFirebaseConfigFromForm() {
+      return {
+        apiKey: document.getElementById('firebase-api-key').value.trim(),
+        authDomain: document.getElementById('firebase-auth-domain').value.trim(),
+        projectId: document.getElementById('firebase-project-id').value.trim(),
+        storageBucket: document.getElementById('firebase-storage-bucket').value.trim(),
+        messagingSenderId: document.getElementById('firebase-messaging-sender-id').value.trim(),
+        appId: document.getElementById('firebase-app-id').value.trim()
+      };
+    }
+
     async function initializeFirebase() {
       try {
-        const config = window.firebaseConfig || {};
-        if (!config.projectId || !config.apiKey || config.projectId.includes('example')) {
-          console.log('Firebase не настроен. Используется только localStorage.');
+        const config = getStoredFirebaseConfig() || window.firebaseConfig || {};
+        if (!config.projectId || !config.apiKey) {
+          setStatus('Введите данные Firebase в блоке ниже, чтобы включить синхронизацию');
           return;
         }
         if (!window.firebase || typeof window.firebase.initializeApp !== 'function') {
@@ -259,7 +316,6 @@
       }
     }
 
-    // Загрузка данных из Firebase
     async function syncFirebaseData() {
       if (!firebaseEnabled || !db) return;
       try {
@@ -279,7 +335,6 @@
       }
     }
 
-    // Слушатель для реал-тайм обновлений
     function setupRealtimeListener() {
       if (!firebaseEnabled || !db) return;
       try {
@@ -301,7 +356,6 @@
       }
     }
 
-    // Сохранение в Firebase
     async function saveToFirebase() {
       if (!firebaseEnabled || !db) return;
       try {
@@ -676,7 +730,6 @@
           return;
         }
         
-        // Парсим заголовок
         const headerLine = lines[0];
         let header = [];
         let current = '';
@@ -771,7 +824,22 @@
       }
     });
 
+    document.getElementById('save-firebase-config').addEventListener('click', async () => {
+      const config = collectFirebaseConfigFromForm();
+      if (!config.projectId || !config.apiKey || !config.authDomain) {
+        setStatus('Заполните хотя бы API Key, Auth Domain и Project ID', true);
+        return;
+      }
+      saveFirebaseConfigToStorage(config);
+      await initializeFirebase();
+      setStatus('Firebase подключён');
+    });
+
     (async () => {
+      const savedConfig = getStoredFirebaseConfig();
+      if (savedConfig) {
+        fillFirebaseConfigForm(savedConfig);
+      }
       await loadNodes();
       await initializeFirebase();
       render();
