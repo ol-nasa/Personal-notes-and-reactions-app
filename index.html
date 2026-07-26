@@ -177,6 +177,23 @@
     #export-actions { display: flex; gap: 8px; margin-top: 6px; }
     .status { font-size: 12px; color: var(--ink-2); margin-top: 6px; min-height: 14px; }
   </style>
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
+    import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js';
+    import { getFirestore, collection, doc, setDoc, getDocs, onSnapshot, deleteDoc, query, where } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js';
+
+    window.firebaseConfig = {
+      apiKey: "AIzaSyA-example",
+      authDomain: "notes-app-example.firebaseapp.com",
+      projectId: "notes-app-example",
+      storageBucket: "notes-app-example.appspot.com",
+      messagingSenderId: "123456789",
+      appId: "1:123456789:web:abcdef123456"
+    };
+
+    window.firebase = { initializeApp, getAuth, signInAnonymously, getFirestore, collection, doc, setDoc, getDocs, onSnapshot, deleteDoc, query, where };
+  </script>
 </head>
 <body>
   <div id="app">
@@ -214,6 +231,105 @@
   <script>
     let nodes = [];
     let confirmDeleteId = null;
+    let db = null;
+    let auth = null;
+    let userId = null;
+    let firebaseEnabled = false;
+    let unsubscribe = null;
+
+    // Инициализация Firebase
+    async function initializeFirebase() {
+      try {
+        if (!window.firebase || !window.firebaseConfig.projectId || window.firebaseConfig.projectId.includes('example')) {
+          console.log('Firebase не настроен. Используется только localStorage.');
+          return;
+        }
+        const { initializeApp, getAuth, signInAnonymously, getFirestore } = window.firebase;
+        const app = initializeApp(window.firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+        
+        await signInAnonymously(auth);
+        userId = auth.currentUser.uid;
+        firebaseEnabled = true;
+        console.log('✓ Firebase инициализирован для пользователя:', userId);
+        
+        await syncFirebaseData();
+        setupRealtimeListener();
+      } catch (err) {
+        console.warn('Firebase недоступен:', err.message);
+        firebaseEnabled = false;
+      }
+    }
+
+    // Загрузка данных из Firebase
+    async function syncFirebaseData() {
+      if (!firebaseEnabled || !db || !userId) return;
+      try {
+        const { getDocs, collection, query, where } = window.firebase;
+        const q = query(collection(db, 'users', userId, 'notes'));
+        const snap = await getDocs(q);
+        const fbNodes = snap.docs.map(doc => doc.data());
+        if (fbNodes.length > 0) {
+          nodes = fbNodes.sort((a, b) => a.created_at.localeCompare(b.created_at));
+          localStorage.setItem('nodes', JSON.stringify(nodes));
+          render();
+          console.log('✓ Загружено из Firebase:', nodes.length, 'записей');
+        }
+      } catch (err) {
+        console.error('Ошибка синхронизации Firebase:', err);
+      }
+    }
+
+    // Слушатель для реал-тайм обновлений
+    function setupRealtimeListener() {
+      if (!firebaseEnabled || !db || !userId) return;
+      try {
+        const { collection, onSnapshot, query, where } = window.firebase;
+        const q = query(collection(db, 'users', userId, 'notes'));
+        unsubscribe = onSnapshot(q, (snap) => {
+          const fbNodes = snap.docs.map(doc => doc.data());
+          if (JSON.stringify(fbNodes) !== JSON.stringify(nodes)) {
+            nodes = fbNodes.sort((a, b) => a.created_at.localeCompare(b.created_at));
+            localStorage.setItem('nodes', JSON.stringify(nodes));
+            render();
+          }
+        });
+      } catch (err) {
+        console.error('Ошибка слушателя:', err);
+      }
+    }
+
+    // Сохранение в Firebase
+    async function saveToFirebase() {
+      if (!firebaseEnabled || !db || !userId) return;
+      try {
+        const { doc, setDoc, deleteDoc, collection } = window.firebase;
+        const userNotesRef = collection(db, 'users', userId, 'notes');
+        
+        // Получаем текущие документы
+        const { getDocs, query } = window.firebase;
+        const q = query(userNotesRef);
+        const snap = await getDocs(q);
+        const fbIds = new Set(snap.docs.map(d => d.id));
+        const localIds = new Set(nodes.map(n => n.id));
+        
+        // Удаляем удалённые записи
+        for (const fbId of fbIds) {
+          if (!localIds.has(fbId)) {
+            await deleteDoc(doc(db, 'users', userId, 'notes', fbId));
+          }
+        }
+        
+        // Добавляем/обновляем записи
+        for (const node of nodes) {
+          await setDoc(doc(db, 'users', userId, 'notes', node.id), node);
+        }
+        console.log('✓ Сохранено в Firebase:', nodes.length, 'записей');
+      } catch (err) {
+        console.error('Ошибка сохранения Firebase:', err);
+      }
+    }
 
     function uid() {
       if (crypto.randomUUID) return crypto.randomUUID();
@@ -259,6 +375,7 @@
     async function saveNodes() {
       try {
         localStorage.setItem('nodes', JSON.stringify(nodes));
+        await saveToFirebase();
       } catch (e) {
         setStatus('Ошибка сохранения: ' + e.message, true);
       }
@@ -674,6 +791,7 @@
 
     (async () => {
       await loadNodes();
+      await initializeFirebase();
       render();
     })();
   </script>
