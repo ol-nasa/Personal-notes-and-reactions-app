@@ -202,6 +202,8 @@
           <button id="download-csv" class="btn-primary">Скачать CSV</button>
           <button id="copy-csv">Скопировать</button>
           <button id="refresh-csv">Обновить</button>
+          <input type="file" id="import-csv" accept=".csv" style="display:none;">
+          <button id="import-csv-btn">Загрузить CSV</button>
         </div>
         <textarea id="csv-out" readonly></textarea>
       </div>
@@ -556,6 +558,80 @@
         csvOut.focus();
         csvOut.select();
         setStatus('Скопируйте вручную (Ctrl/Cmd+C) — буфер обмена недоступен напрямую', true);
+      }
+    });
+
+    document.getElementById('import-csv-btn').addEventListener('click', () => {
+      document.getElementById('import-csv').click();
+    });
+
+    document.getElementById('import-csv').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const lines = text.trim().split('\n');
+        if (lines.length < 2) {
+          setStatus('CSV-файл пустой', true);
+          return;
+        }
+        const header = lines[0].split(';').map(h => h.trim().toLowerCase());
+        const idIdx = header.indexOf('id');
+        const parentIdx = header.indexOf('parent_id');
+        const contentIdx = header.indexOf('content');
+        const createdIdx = header.indexOf('created_at');
+        if (idIdx < 0 || contentIdx < 0 || createdIdx < 0) {
+          setStatus('Неверный формат CSV (необходимы колонки: id, content, created_at)', true);
+          return;
+        }
+        const imported = [];
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          let fields = [];
+          let current = '';
+          let inQuotes = false;
+          for (let j = 0; j < line.length; j++) {
+            const ch = line[j];
+            if (ch === '"') {
+              if (inQuotes && line[j + 1] === '"') {
+                current += '"';
+                j++;
+              } else {
+                inQuotes = !inQuotes;
+              }
+            } else if (ch === ';' && !inQuotes) {
+              fields.push(current);
+              current = '';
+            } else {
+              current += ch;
+            }
+          }
+          fields.push(current);
+          const id = fields[idIdx]?.trim() || '';
+          const parentId = fields[parentIdx]?.trim() || null;
+          const content = fields[contentIdx]?.trim() || '';
+          const createdAt = fields[createdIdx]?.trim() || new Date().toISOString();
+          if (id && content) {
+            imported.push({
+              id,
+              parent_id: parentId || null,
+              content,
+              created_at: createdAt
+            });
+          }
+        }
+        if (imported.length === 0) {
+          setStatus('Не найдено записей для импорта', true);
+          return;
+        }
+        nodes = imported;
+        await saveNodes();
+        render();
+        setStatus(`Импортировано ${imported.length} записей`);
+        document.getElementById('import-csv').value = '';
+      } catch (err) {
+        setStatus('Ошибка при импорте: ' + err.message, true);
       }
     });
 
